@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup-gitwatch - Automated gitwatch setup for any project
+# setup-gitwatch - Cross-platform automated gitwatch setup
 # Usage: setup-gitwatch [project_path]
 
 set -e
@@ -8,7 +8,21 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Load configuration if exists
+CONFIG_DIR="${HOME}/.config/gitwatch-automation"
+if [ -f "$CONFIG_DIR/install.conf" ]; then
+    source "$CONFIG_DIR/install.conf"
+fi
+
+# Default values
+INSTALL_MODE="${INSTALL_MODE:-auto}"
+GITWATCH_PATH="${GITWATCH_PATH:-/usr/local/bin/gitwatch}"
+USE_SYSTEMD=true
+USE_LAUNCHD=false
+USE_BACKGROUND=false
 
 # Parse arguments
 PROJECT_PATH="${1:-$(pwd)}"
@@ -20,6 +34,54 @@ echo -e "${GREEN}Setting up gitwatch for: $PROJECT_NAME${NC}"
 echo "Path: $PROJECT_PATH"
 echo "Service name: $SERVICE_NAME"
 echo ""
+
+# Detect OS and init system
+detect_system() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        OS="linux"
+        if command -v systemctl &> /dev/null && systemctl --version &> /dev/null; then
+            INIT_SYSTEM="systemd"
+        else
+            INIT_SYSTEM="none"
+            USE_SYSTEMD=false
+            USE_BACKGROUND=true
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        OS="macos"
+        INIT_SYSTEM="launchd"
+        USE_SYSTEMD=false
+        USE_LAUNCHD=true
+    elif grep -qi microsoft /proc/version 2>/dev/null; then
+        OS="wsl"
+        if command -v systemctl &> /dev/null && systemctl --version &> /dev/null; then
+            INIT_SYSTEM="systemd"
+        else
+            INIT_SYSTEM="none"
+            USE_SYSTEMD=false
+            USE_BACKGROUND=true
+        fi
+    else
+        OS="unknown"
+        INIT_SYSTEM="none"
+        USE_SYSTEMD=false
+        USE_BACKGROUND=true
+    fi
+}
+
+# Check if gitwatch exists
+check_gitwatch() {
+    # Check common locations
+    for path in "$GITWATCH_PATH" "/usr/local/bin/gitwatch" "$HOME/.local/bin/gitwatch" "$(which gitwatch 2>/dev/null || echo '')"; do
+        if [ -f "$path" ] && [ -x "$path" ]; then
+            GITWATCH_CMD="$path"
+            return 0
+        fi
+    done
+    
+    echo -e "${RED}Error: gitwatch not found${NC}"
+    echo "Please run the installer first: ./install.sh"
+    exit 1
+}
 
 # Validate project path
 if [ ! -d "$PROJECT_PATH" ]; then
@@ -36,31 +98,46 @@ if [ ! -d .git ]; then
     git branch -M main
 fi
 
-# Check if gitwatch is installed
-if ! command -v gitwatch &> /dev/null; then
-    echo -e "${YELLOW}Installing gitwatch...${NC}"
-    TEMP_DIR=$(mktemp -d)
-    cd "$TEMP_DIR"
-    git clone https://github.com/gitwatch/gitwatch.git
-    sudo cp gitwatch/gitwatch.sh /usr/local/bin/gitwatch
-    sudo chmod +x /usr/local/bin/gitwatch
-    cd - > /dev/null
-    rm -rf "$TEMP_DIR"
+# Detect system
+detect_system
+echo -e "${BLUE}System detected: $OS with $INIT_SYSTEM${NC}"
+
+# Check gitwatch
+check_gitwatch
+echo -e "${GREEN}✓ Found gitwatch at: $GITWATCH_CMD${NC}"
+
+# Install file watching tools if missing
+if [[ "$OS" == "linux" ]] || [[ "$OS" == "wsl" ]]; then
+    if ! command -v inotifywait &> /dev/null; then
+        echo -e "${YELLOW}Warning: inotify-tools not installed${NC}"
+        echo "Gitwatch will use polling mode (less efficient)"
+    fi
+elif [[ "$OS" == "macos" ]]; then
+    if ! command -v fswatch &> /dev/null; then
+        echo -e "${YELLOW}Warning: fswatch not installed${NC}"
+        echo "Gitwatch will use polling mode (less efficient)"
+    fi
 fi
 
-# Install inotify-tools if needed
-if ! command -v inotifywait &> /dev/null; then
-    echo -e "${YELLOW}Installing inotify-tools...${NC}"
-    sudo apt-get update && sudo apt-get install -y inotify-tools
-fi
+# Set up SSH agent based on system
+setup_ssh_agent() {
+    if [ "$USE_SYSTEMD" = true ]; then
+        setup_ssh_agent_systemd
+    elif [ "$USE_LAUNCHD" = true ]; then
+        setup_ssh_agent_launchd
+    else
+        setup_ssh_agent_manual
+    fi
+}
 
-# Set up SSH agent services (if not already done)
-mkdir -p ~/.config/systemd/user
-
-# Check if ssh-agent service exists
-if [ ! -f ~/.config/systemd/user/ssh-agent.service ]; then
-    echo -e "${YELLOW}Creating ssh-agent service...${NC}"
-    cat > ~/.config/systemd/user/ssh-agent.service << 'EOF'
+# SystemD SSH agent setup
+setup_ssh_agent_systemd() {
+    mkdir -p ~/.config/systemd/user
+    
+    # Check if ssh-agent service exists
+    if [ ! -f ~/.config/systemd/user/ssh-agent.service ]; then
+        echo -e "${YELLOW}Creating ssh-agent service...${NC}"
+        cat > ~/.config/systemd/user/ssh-agent.service << 'EOF'
 [Unit]
 Description=SSH key agent
 
@@ -72,30 +149,30 @@ ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
 [Install]
 WantedBy=default.target
 EOF
-    
-    systemctl --user daemon-reload
-    systemctl --user enable --now ssh-agent.service
-fi
-
-# Check if ssh-add service exists
-if [ ! -f ~/.config/systemd/user/ssh-add.service ]; then
-    echo -e "${YELLOW}Creating ssh-add service...${NC}"
-    
-    # Find SSH key
-    SSH_KEY_PATH=""
-    for key in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa; do
-        if [ -f "$key" ]; then
-            SSH_KEY_PATH="$key"
-            break
-        fi
-    done
-    
-    if [ -z "$SSH_KEY_PATH" ]; then
-        echo -e "${RED}Error: No SSH key found. Please create one with ssh-keygen${NC}"
-        exit 1
+        
+        systemctl --user daemon-reload
+        systemctl --user enable --now ssh-agent.service
     fi
     
-    cat > ~/.config/systemd/user/ssh-add.service << EOF
+    # Check if ssh-add service exists
+    if [ ! -f ~/.config/systemd/user/ssh-add.service ]; then
+        echo -e "${YELLOW}Creating ssh-add service...${NC}"
+        
+        # Find SSH key
+        SSH_KEY_PATH=""
+        for key in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa; do
+            if [ -f "$key" ]; then
+                SSH_KEY_PATH="$key"
+                break
+            fi
+        done
+        
+        if [ -z "$SSH_KEY_PATH" ]; then
+            echo -e "${RED}Error: No SSH key found. Please create one with ssh-keygen${NC}"
+            exit 1
+        fi
+        
+        cat > ~/.config/systemd/user/ssh-add.service << EOF
 [Unit]
 Description=Add SSH key
 After=ssh-agent.service
@@ -108,9 +185,97 @@ ExecStart=/usr/bin/ssh-add $SSH_KEY_PATH
 [Install]
 WantedBy=default.target
 EOF
+        
+        systemctl --user enable --now ssh-add.service
+    fi
+}
+
+# Launchd SSH agent setup (macOS)
+setup_ssh_agent_launchd() {
+    LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+    mkdir -p "$LAUNCH_AGENTS_DIR"
     
-    systemctl --user enable --now ssh-add.service
+    # Create ssh-agent plist
+    if [ ! -f "$LAUNCH_AGENTS_DIR/com.gitwatch.ssh-agent.plist" ]; then
+        echo -e "${YELLOW}Creating SSH agent launch agent...${NC}"
+        cat > "$LAUNCH_AGENTS_DIR/com.gitwatch.ssh-agent.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gitwatch.ssh-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/ssh-agent</string>
+        <string>-l</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SSH_AUTH_SOCK</key>
+        <string>$HOME/.ssh/agent.sock</string>
+    </dict>
+</dict>
+</plist>
+EOF
+        launchctl load "$LAUNCH_AGENTS_DIR/com.gitwatch.ssh-agent.plist"
+    fi
+    
+    # Add SSH key
+    SSH_KEY_PATH=""
+    for key in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa; do
+        if [ -f "$key" ]; then
+            SSH_KEY_PATH="$key"
+            break
+        fi
+    done
+    
+    if [ -n "$SSH_KEY_PATH" ]; then
+        ssh-add -K "$SSH_KEY_PATH" 2>/dev/null || ssh-add "$SSH_KEY_PATH"
+    fi
+}
+
+# Manual SSH agent setup (fallback)
+setup_ssh_agent_manual() {
+    echo -e "${YELLOW}Setting up SSH agent manually...${NC}"
+    
+    # Check if ssh-agent is running
+    if ! pgrep -x ssh-agent > /dev/null; then
+        eval "$(ssh-agent -s)"
+    fi
+    
+    # Add to shell profile
+    SHELL_RC="$HOME/.bashrc"
+    if [ -n "$ZSH_VERSION" ]; then
+        SHELL_RC="$HOME/.zshrc"
+    fi
+    
+    if ! grep -q "SSH_AUTH_SOCK" "$SHELL_RC" 2>/dev/null; then
+        cat >> "$SHELL_RC" << 'EOF'
+
+# SSH Agent
+if ! pgrep -x ssh-agent > /dev/null; then
+    eval "$(ssh-agent -s)"
 fi
+EOF
+    fi
+    
+    # Add SSH key
+    SSH_KEY_PATH=""
+    for key in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa; do
+        if [ -f "$key" ]; then
+            ssh-add "$key"
+            break
+        fi
+    done
+}
+
+# Set up SSH agent
+setup_ssh_agent
 
 cd "$PROJECT_PATH"
 
@@ -119,56 +284,13 @@ echo -e "${YELLOW}Updating .gitignore...${NC}"
 touch .gitignore
 
 # Use template if available
-TEMPLATE_FILE="$HOME/.config/gitwatch-automation/gitignore_template"
+TEMPLATE_FILE="$CONFIG_DIR/gitignore_template"
 if [ -f "$TEMPLATE_FILE" ]; then
     # Check if gitwatch section already exists
     if ! grep -q "=== Gitwatch Auto-Generated Exclusions ===" .gitignore; then
         echo "" >> .gitignore
         cat "$TEMPLATE_FILE" >> .gitignore
     fi
-else
-    # Fallback to inline template
-    {
-        echo ""
-        echo "# === Gitwatch Auto-Generated Exclusions ==="
-        echo "# Database files"
-        echo "*.db"
-        echo "*.sqlite"
-        echo "*.sqlite3"
-        echo ""
-        echo "# Logs"
-        echo "*.log"
-        echo "logs/"
-        echo ""
-        echo "# Large data files"
-        echo "*.csv"
-        echo "*.parquet"
-        echo "*.pkl"
-        echo "*.h5"
-        echo "*.hdf5"
-        echo "*.npy"
-        echo "*.npz"
-        echo "data/*.csv"
-        echo "data/*.parquet"
-        echo ""
-        echo "# Cache and temporary"
-        echo "__pycache__/"
-        echo "*.pyc"
-        echo ".cache/"
-        echo "tmp/"
-        echo "temp/"
-        echo ""
-        echo "# OS files"
-        echo ".DS_Store"
-        echo "Thumbs.db"
-        echo ""
-        echo "# IDE files"
-        echo ".vscode/"
-        echo ".idea/"
-        echo "*.swp"
-        echo "*.swo"
-        echo "# === End Gitwatch Exclusions ==="
-    } >> .gitignore
 fi
 
 # Remove duplicates from .gitignore
@@ -199,9 +321,21 @@ else
     fi
 fi
 
-# Create gitwatch service
-echo -e "${YELLOW}Creating gitwatch service...${NC}"
-cat > ~/.config/systemd/user/${SERVICE_NAME}.service << EOF
+# Create service based on init system
+create_service() {
+    if [ "$USE_SYSTEMD" = true ]; then
+        create_systemd_service
+    elif [ "$USE_LAUNCHD" = true ]; then
+        create_launchd_service
+    else
+        create_background_service
+    fi
+}
+
+# Create systemd service
+create_systemd_service() {
+    echo -e "${YELLOW}Creating systemd service...${NC}"
+    cat > ~/.config/systemd/user/${SERVICE_NAME}.service << EOF
 [Unit]
 Description=Gitwatch for ${PROJECT_NAME}
 After=network-online.target ssh-agent.service
@@ -210,7 +344,7 @@ After=network-online.target ssh-agent.service
 Type=simple
 Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
 WorkingDirectory=${PROJECT_PATH}
-ExecStart=/usr/local/bin/gitwatch -r origin -b main ${PROJECT_PATH}
+ExecStart=${GITWATCH_CMD} -r origin -b main ${PROJECT_PATH}
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal
@@ -220,10 +354,134 @@ StandardError=journal
 WantedBy=default.target
 EOF
 
-# Reload and start service
-systemctl --user daemon-reload
-systemctl --user enable ${SERVICE_NAME}.service
-systemctl --user start ${SERVICE_NAME}.service
+    systemctl --user daemon-reload
+    systemctl --user enable ${SERVICE_NAME}.service
+    systemctl --user start ${SERVICE_NAME}.service
+    
+    echo -e "${GREEN}✓ SystemD service created and started${NC}"
+}
+
+# Create launchd service (macOS)
+create_launchd_service() {
+    echo -e "${YELLOW}Creating launchd service...${NC}"
+    LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+    mkdir -p "$LAUNCH_AGENTS_DIR"
+    
+    cat > "$LAUNCH_AGENTS_DIR/${SERVICE_NAME}.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${SERVICE_NAME}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${GITWATCH_CMD}</string>
+        <string>-r</string>
+        <string>origin</string>
+        <string>-b</string>
+        <string>main</string>
+        <string>${PROJECT_PATH}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${PROJECT_PATH}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SSH_AUTH_SOCK</key>
+        <string>$HOME/.ssh/agent.sock</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+    launchctl load "$LAUNCH_AGENTS_DIR/${SERVICE_NAME}.plist"
+    echo -e "${GREEN}✓ Launchd service created and loaded${NC}"
+}
+
+# Create background service (fallback)
+create_background_service() {
+    echo -e "${YELLOW}Creating background service...${NC}"
+    
+    # Create service script
+    SERVICE_SCRIPT="$CONFIG_DIR/services/${SERVICE_NAME}.sh"
+    mkdir -p "$CONFIG_DIR/services"
+    
+    cat > "$SERVICE_SCRIPT" << EOF
+#!/bin/bash
+# Gitwatch service for ${PROJECT_NAME}
+
+export SSH_AUTH_SOCK=\$(ls -t /tmp/ssh-*/agent.* 2>/dev/null | head -1)
+cd "${PROJECT_PATH}"
+exec ${GITWATCH_CMD} -r origin -b main "${PROJECT_PATH}"
+EOF
+    
+    chmod +x "$SERVICE_SCRIPT"
+    
+    # Create control script
+    CONTROL_SCRIPT="$CONFIG_DIR/services/${SERVICE_NAME}-control.sh"
+    cat > "$CONTROL_SCRIPT" << EOF
+#!/bin/bash
+# Control script for ${SERVICE_NAME}
+
+PIDFILE="$CONFIG_DIR/services/${SERVICE_NAME}.pid"
+LOGFILE="$CONFIG_DIR/services/${SERVICE_NAME}.log"
+
+start() {
+    if [ -f "\$PIDFILE" ] && kill -0 \$(cat "\$PIDFILE") 2>/dev/null; then
+        echo "Service already running"
+        return 1
+    fi
+    
+    nohup "$SERVICE_SCRIPT" > "\$LOGFILE" 2>&1 &
+    echo \$! > "\$PIDFILE"
+    echo "Service started"
+}
+
+stop() {
+    if [ -f "\$PIDFILE" ]; then
+        kill \$(cat "\$PIDFILE") 2>/dev/null
+        rm -f "\$PIDFILE"
+        echo "Service stopped"
+    else
+        echo "Service not running"
+    fi
+}
+
+status() {
+    if [ -f "\$PIDFILE" ] && kill -0 \$(cat "\$PIDFILE") 2>/dev/null; then
+        echo "Service running (PID: \$(cat "\$PIDFILE"))"
+    else
+        echo "Service not running"
+    fi
+}
+
+case "\$1" in
+    start|stop|status) "\$1" ;;
+    restart) stop; start ;;
+    *) echo "Usage: \$0 {start|stop|restart|status}" ;;
+esac
+EOF
+    
+    chmod +x "$CONTROL_SCRIPT"
+    
+    # Start the service
+    "$CONTROL_SCRIPT" start
+    
+    echo -e "${GREEN}✓ Background service created and started${NC}"
+    echo "Control with: $CONTROL_SCRIPT {start|stop|restart|status}"
+}
+
+# Create the service
+create_service
 
 # Initial commit
 echo -e "${YELLOW}Creating initial commits...${NC}"
@@ -244,9 +502,16 @@ This repository is automatically monitored by gitwatch.
 - **Project Path**: ${PROJECT_PATH}
 - **Auto-commit**: Enabled
 - **Auto-push**: Enabled (via SSH)
+- **Init System**: ${INIT_SYSTEM}
 
 ## Management Commands
-\`\`\`bash
+
+EOF
+
+    if [ "$USE_SYSTEMD" = true ]; then
+        cat >> README_GITWATCH.md << 'EOF'
+### SystemD Commands
+```bash
 # Check status
 systemctl --user status ${SERVICE_NAME}
 
@@ -261,13 +526,54 @@ systemctl --user stop ${SERVICE_NAME}
 
 # Disable service
 systemctl --user disable ${SERVICE_NAME}
+```
+EOF
+    elif [ "$USE_LAUNCHD" = true ]; then
+        cat >> README_GITWATCH.md << 'EOF'
+### Launchd Commands
+```bash
+# Check status
+launchctl list | grep ${SERVICE_NAME}
+
+# View logs
+tail -f /var/log/system.log | grep ${SERVICE_NAME}
+
+# Stop service
+launchctl unload ~/Library/LaunchAgents/${SERVICE_NAME}.plist
+
+# Start service
+launchctl load ~/Library/LaunchAgents/${SERVICE_NAME}.plist
+```
+EOF
+    else
+        cat >> README_GITWATCH.md << EOF
+### Background Service Commands
+\`\`\`bash
+# Check status
+$CONFIG_DIR/services/${SERVICE_NAME}-control.sh status
+
+# View logs
+tail -f $CONFIG_DIR/services/${SERVICE_NAME}.log
+
+# Stop service
+$CONFIG_DIR/services/${SERVICE_NAME}-control.sh stop
+
+# Start service
+$CONFIG_DIR/services/${SERVICE_NAME}-control.sh start
+
+# Restart service
+$CONFIG_DIR/services/${SERVICE_NAME}-control.sh restart
 \`\`\`
+EOF
+    fi
+
+    cat >> README_GITWATCH.md << EOF
 
 ## Troubleshooting
 If pushes fail, check:
 1. SSH key is added to GitHub
-2. SSH agent is running: \`systemctl --user status ssh-agent\`
-3. Service logs: \`journalctl --user -u ${SERVICE_NAME} -n 50\`
+2. SSH agent is running
+3. Service logs (see commands above)
 
 Configured on: $(date)
 EOF
@@ -299,8 +605,23 @@ fi
 echo ""
 echo -e "${GREEN}✅ Gitwatch setup complete!${NC}"
 echo ""
-echo "Service status:"
-systemctl --user status ${SERVICE_NAME} --no-pager
-echo ""
-echo -e "To view logs: ${YELLOW}journalctl --user -u ${SERVICE_NAME} -f${NC}"
+
+# Show status based on init system
+if [ "$USE_SYSTEMD" = true ]; then
+    echo "Service status:"
+    systemctl --user status ${SERVICE_NAME} --no-pager
+    echo ""
+    echo -e "To view logs: ${YELLOW}journalctl --user -u ${SERVICE_NAME} -f${NC}"
+elif [ "$USE_LAUNCHD" = true ]; then
+    echo "Service status:"
+    launchctl list | grep ${SERVICE_NAME} || echo "Service: ${SERVICE_NAME}"
+    echo ""
+    echo -e "To view logs: ${YELLOW}tail -f /var/log/system.log | grep ${SERVICE_NAME}${NC}"
+else
+    echo "Service status:"
+    "$CONFIG_DIR/services/${SERVICE_NAME}-control.sh" status
+    echo ""
+    echo -e "To view logs: ${YELLOW}tail -f $CONFIG_DIR/services/${SERVICE_NAME}.log${NC}"
+fi
+
 echo -e "To test: Create/modify a file in ${PROJECT_PATH}"

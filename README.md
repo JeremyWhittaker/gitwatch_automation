@@ -54,12 +54,22 @@ sudo ./install.sh
 
 ## 🔧 Usage
 
-### Set up gitwatch on a project:
+### Quick Start:
 ```bash
-setup-gitwatch /path/to/project
-# or from within a project:
-cd /path/to/project
+# 1. Set up on a new project
+mkdir my-project && cd my-project
 setup-gitwatch
+# Follow prompts to add GitHub repo URL
+
+# 2. Set up on existing project
+cd /path/to/existing/project
+setup-gitwatch
+# Auto-detects git remote if present
+
+# 3. Verify it's working
+touch test.txt
+git log --oneline -1
+# Should see auto-commit within seconds
 ```
 
 ### Manage services:

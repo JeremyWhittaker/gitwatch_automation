@@ -88,17 +88,31 @@ The system creates systemd user services following this pattern:
 
 ## Important Implementation Details
 
-1. **SSH Authentication**: The system assumes SSH key authentication with GitHub. It creates persistent SSH agent services to handle authentication for background gitwatch processes.
+1. **SSH Authentication**: 
+   - Checks for existing SSH keys (ed25519, rsa, ecdsa)
+   - Offers to create SSH key interactively if missing
+   - Creates persistent SSH agent services for background authentication
+   - Shows public key for user to add to GitHub
 
-2. **Service Naming**: Project names are normalized (lowercase, spaces to hyphens) for service names.
+2. **Git Remote Handling**:
+   - Auto-detects existing git remotes
+   - Prompts for GitHub URL if no remote exists
+   - Automatically converts HTTPS URLs to SSH format
+   - Allows skipping (local commits only)
 
-3. **Git Remote Handling**: Automatically converts HTTPS URLs to SSH format for GitHub remotes.
+3. **Dependency Management**:
+   - Checks for inotify-tools (Linux) or fswatch (macOS)
+   - Clear warnings if dependencies missing
+   - Falls back to polling mode if file watchers unavailable
 
-4. **Error Handling**: Scripts use `set -e` for fail-fast behavior. Services restart on failure.
+4. **Service Naming**: Project names are normalized (lowercase, spaces to hyphens) for service names.
 
-5. **Duplicate Prevention**: The setup script checks for existing SSH services and gitignore sections to avoid duplicates.
+5. **Error Handling**: 
+   - Scripts use `set -e` for fail-fast behavior
+   - Services restart on failure with 30s delay
+   - Push failures don't stop local commits
 
-6. **Shell Compatibility**: Scripts use bash and require systemd (Linux only).
+6. **Duplicate Prevention**: The setup script checks for existing SSH services and gitignore sections to avoid duplicates.
 
 ## Cross-Platform Support
 
@@ -125,3 +139,19 @@ The system now supports multiple platforms and installation modes:
 - SSH keys are loaded into agent memory, not stored in service files
 - The system respects existing .gitignore patterns and adds security-focused exclusions
 - User mode installation avoids sudo requirements for better security
+
+## Testing and Validation
+
+The system has been tested on:
+- Ubuntu 25.04 with systemd (verified working)
+- User mode installation without sudo
+- Projects with and without existing git remotes
+- Missing SSH key scenarios (now handled interactively)
+- Missing inotify-tools (clear error messages)
+
+Successfully tested features:
+- Auto-commit on file changes (within seconds)
+- Auto-push to GitHub
+- Service management commands
+- Compatibility checking
+- Multiple installation modes

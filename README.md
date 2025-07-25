@@ -4,30 +4,24 @@ Automated setup and management tools for gitwatch - continuous version control f
 
 ## 🚀 Quick Install
 
-### Prerequisites (Linux/WSL)
-If you're on Linux/WSL, you need to install inotify-tools first:
-```bash
-# Ubuntu/Debian
-sudo apt-get update && sudo apt-get install -y inotify-tools
-
-# RHEL/CentOS/Fedora
-sudo yum install -y inotify-tools
-
-# Arch
-sudo pacman -S inotify-tools
-```
-
 ### Installation
 ```bash
 # Clone this repository
 git clone git@github.com:JeremyWhittaker/gitwatch_automation.git
 cd gitwatch_automation
 
-# Check system compatibility
+# Check system compatibility first
 ./scripts/check-compatibility.sh
 
-# Run the installer
-./install.sh
+# Option 1: Install with sudo (recommended - auto-installs dependencies)
+sudo ./install.sh
+
+# Option 2: Install without sudo (you must install dependencies first)
+# First install required dependencies:
+# Ubuntu/Debian: sudo apt-get install -y inotify-tools
+# RHEL/CentOS: sudo yum install -y inotify-tools
+# Then run:
+./install.sh --user
 ```
 
 ## 📦 What's Included

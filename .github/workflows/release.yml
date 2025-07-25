@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Create Release Archive
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        mkdir -p gitwatch-automation-$VERSION
+        cp -r scripts/ gitwatch-automation-$VERSION/
+        cp install.sh README.md LICENSE CONTRIBUTING.md gitwatch-automation-$VERSION/
+        tar -czf gitwatch-automation-$VERSION.tar.gz gitwatch-automation-$VERSION
+        zip -r gitwatch-automation-$VERSION.zip gitwatch-automation-$VERSION
+    
+    - name: Generate Changelog
+      id: changelog
+      run: |
+        echo "## What's Changed" > changelog.md
+        git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s" >> changelog.md
+        echo "" >> changelog.md
+        echo "## Installation" >> changelog.md
+        echo '```bash' >> changelog.md
+        echo "wget https://github.com/JeremyWhittaker/gitwatch_automation/releases/download/$VERSION/gitwatch-automation-$VERSION.tar.gz" >> changelog.md
+        echo "tar -xzf gitwatch-automation-$VERSION.tar.gz" >> changelog.md
+        echo "cd gitwatch-automation-$VERSION" >> changelog.md
+        echo "sudo ./install.sh" >> changelog.md
+        echo '```' >> changelog.md
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: changelog.md
+        files: |
+          gitwatch-automation-*.tar.gz
+          gitwatch-automation-*.zip
+        generate_release_notes: true

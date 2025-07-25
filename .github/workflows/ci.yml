@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Run ShellCheck
+      uses: ludeeus/action-shellcheck@2.0.0
+      with:
+        check_together: 'yes'
+        severity: error
+
+  compatibility-test:
+    name: Compatibility Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Make scripts executable
+      run: chmod +x scripts/* *.sh
+    
+    - name: Run compatibility check
+      run: ./scripts/check-compatibility.sh
+    
+    - name: Test installation (dry run)
+      run: |
+        ./install.sh --user --dry-run
+        ./install.sh --portable --dry-run
+
+  documentation:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Check markdown files
+      uses: DavidAnson/markdownlint-cli2-action@v11
+      with:
+        config: .markdownlint.yml
+        globs: '**/*.md'
+      continue-on-error: true
+
+  test-setup:
+    name: Test Setup Script
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y inotify-tools
+    
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install fswatch
+    
+    - name: Create test repository
+      run: |
+        mkdir -p test-repo
+        cd test-repo
+        git init
+        echo "test" > test.txt
+        git add .
+        git commit -m "Initial commit"
+    
+    - name: Test setup script (dry run)
+      run: |
+        cd test-repo
+        ../scripts/setup-gitwatch --dry-run
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'

@@ -59,7 +59,7 @@ if ! command -v inotifywait &> /dev/null; then
 fi
 
 # Create uninstall script
-cat > "$INSTALL_DIR/gitwatch-uninstall" << 'EOF'
+cat > "$INSTALL_DIR/gitwatch-uninstall" << 'UNINSTALL_EOF'
 #!/bin/bash
 # Uninstall gitwatch automation
 
@@ -80,7 +80,7 @@ echo "gitwatch-manage list"
 echo "gitwatch-manage remove <service-name>"
 
 echo "Uninstall complete!"
-EOF
+UNINSTALL_EOF
 
 chmod +x "$INSTALL_DIR/gitwatch-uninstall"
 

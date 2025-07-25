@@ -236,7 +236,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 📧 Email: gitwatch@whittaker.dev
 - 💬 [Discussions](https://github.com/JeremyWhittaker/gitwatch_automation/discussions)
 - 🐛 [Issues](https://github.com/JeremyWhittaker/gitwatch_automation/issues)
 

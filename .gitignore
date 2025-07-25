@@ -1,0 +1,8 @@
+# Test artifacts
+test/
+testing/
+*.test
+
+# Temporary files
+*.tmp
+*~

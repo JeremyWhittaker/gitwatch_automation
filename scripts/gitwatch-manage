@@ -1,0 +1,137 @@
+#\!/bin/bash
+# gitwatch-manage - Manage gitwatch services
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+show_help() {
+    echo "gitwatch-manage - Manage gitwatch services"
+    echo ""
+    echo "Usage: gitwatch-manage <command> [service-name]"
+    echo ""
+    echo "Commands:"
+    echo "  list              List all gitwatch services"
+    echo "  status [name]     Show status of service(s)"
+    echo "  logs [name]       Show logs for service"
+    echo "  stop [name]       Stop service"
+    echo "  start [name]      Start service"
+    echo "  restart [name]    Restart service"
+    echo "  disable [name]    Disable service"
+    echo "  enable [name]     Enable service"
+    echo "  remove [name]     Remove service completely"
+    echo ""
+    echo "If no service name is provided, shows all gitwatch services"
+}
+
+list_services() {
+    echo -e "${BLUE}Gitwatch Services:${NC}"
+    echo ""
+    
+    services=$(systemctl --user list-unit-files  < /dev/null |  grep "gitwatch-" | awk '{print $1}' | sed 's/.service$//')
+    
+    if [ -z "$services" ]; then
+        echo "No gitwatch services found"
+        return
+    fi
+    
+    for service in $services; do
+        status=$(systemctl --user is-active ${service}.service 2>/dev/null || echo "unknown")
+        enabled=$(systemctl --user is-enabled ${service}.service 2>/dev/null || echo "unknown")
+        
+        # Get project path from service file
+        project_path=$(systemctl --user cat ${service}.service 2>/dev/null | grep "WorkingDirectory=" | cut -d= -f2)
+        
+        # Color code status
+        if [ "$status" = "active" ]; then
+            status_color="${GREEN}●${NC}"
+        elif [ "$status" = "inactive" ]; then
+            status_color="${YELLOW}●${NC}"
+        else
+            status_color="${RED}●${NC}"
+        fi
+        
+        echo -e "$status_color $service"
+        echo -e "   Status: $status | Enabled: $enabled"
+        echo -e "   Path: ${project_path:-unknown}"
+        echo ""
+    done
+}
+
+show_status() {
+    local service_pattern="${1:-gitwatch-}"
+    
+    if [[ "$service_pattern" != gitwatch-* ]]; then
+        service_pattern="gitwatch-$service_pattern"
+    fi
+    
+    systemctl --user status "${service_pattern}*.service" --no-pager
+}
+
+show_logs() {
+    local service_name="$1"
+    
+    if [ -z "$service_name" ]; then
+        echo -e "${YELLOW}Showing logs for all gitwatch services${NC}"
+        journalctl --user -u "gitwatch-*.service" -f
+    else
+        if [[ "$service_name" != gitwatch-* ]]; then
+            service_name="gitwatch-$service_name"
+        fi
+        echo -e "${YELLOW}Showing logs for $service_name${NC}"
+        journalctl --user -u "${service_name}.service" -f
+    fi
+}
+
+manage_service() {
+    local action="$1"
+    local service_name="$2"
+    
+    if [ -z "$service_name" ]; then
+        echo -e "${RED}Error: Service name required${NC}"
+        exit 1
+    fi
+    
+    if [[ "$service_name" != gitwatch-* ]]; then
+        service_name="gitwatch-$service_name"
+    fi
+    
+    case "$action" in
+        stop|start|restart|disable|enable)
+            systemctl --user $action ${service_name}.service
+            echo -e "${GREEN}✓ Service ${service_name} ${action}ed${NC}"
+            ;;
+        remove)
+            echo -e "${YELLOW}Removing service ${service_name}...${NC}"
+            systemctl --user stop ${service_name}.service 2>/dev/null || true
+            systemctl --user disable ${service_name}.service 2>/dev/null || true
+            rm -f ~/.config/systemd/user/${service_name}.service
+            systemctl --user daemon-reload
+            echo -e "${GREEN}✓ Service ${service_name} removed${NC}"
+            ;;
+    esac
+}
+
+# Main logic
+case "${1:-help}" in
+    list)
+        list_services
+        ;;
+    status)
+        show_status "$2"
+        ;;
+    logs)
+        show_logs "$2"
+        ;;
+    stop|start|restart|disable|enable|remove)
+        manage_service "$1" "$2"
+        ;;
+    help|--help|-h|*)
+        show_help
+        ;;
+esac

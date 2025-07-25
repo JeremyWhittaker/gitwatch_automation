@@ -168,8 +168,25 @@ EOF
         done
         
         if [ -z "$SSH_KEY_PATH" ]; then
-            echo -e "${RED}Error: No SSH key found. Please create one with ssh-keygen${NC}"
-            exit 1
+            echo -e "${RED}Error: No SSH key found.${NC}"
+            echo -e "${YELLOW}Would you like to create one now? (y/n)${NC}"
+            read -p "Create SSH key? " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                ssh-keygen -t ed25519 -C "gitwatch@$(hostname)" -f ~/.ssh/id_ed25519 -N ""
+                SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
+                echo -e "${GREEN}✓ SSH key created${NC}"
+                echo -e "${YELLOW}Add this public key to GitHub:${NC}"
+                cat ~/.ssh/id_ed25519.pub
+                echo ""
+                echo -e "${YELLOW}Press Enter after adding the key to GitHub...${NC}"
+                read
+            else
+                echo -e "${RED}Cannot continue without SSH key for systemd mode${NC}"
+                echo -e "${YELLOW}Run: ssh-keygen -t ed25519${NC}"
+                echo -e "${YELLOW}Or use: ./install.sh --background${NC}"
+                exit 1
+            fi
         fi
         
         cat > ~/.config/systemd/user/ssh-add.service << EOF

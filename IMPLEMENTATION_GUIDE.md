@@ -6,14 +6,14 @@
 ```bash
 # 1. Create a new repository on GitHub called 'gitwatch-automation'
 
-# 2. Push this code
+# 2. Push this code (Already done!)
 cd ~/projects/gitwatch-automation
-git remote add origin git@github.com:YOUR_USERNAME/gitwatch-automation.git
+git remote add origin git@github.com:JeremyWhittaker/gitwatch_automation.git
 git push -u origin main
 
 # 3. Install on any machine
-git clone git@github.com:YOUR_USERNAME/gitwatch-automation.git
-cd gitwatch-automation
+git clone git@github.com:JeremyWhittaker/gitwatch_automation.git
+cd gitwatch_automation
 ./install.sh
 
 # 4. Update to latest version
@@ -130,7 +130,7 @@ gitwatch-manage restart projectname
 ### Quick Share Command
 ```bash
 echo "Install gitwatch automation:"
-echo "git clone https://github.com/YOUR_USERNAME/gitwatch-automation.git && cd gitwatch-automation && ./install.sh"
+echo "git clone git@github.com:JeremyWhittaker/gitwatch_automation.git && cd gitwatch_automation && ./install.sh"
 ```
 
 ### For Teams

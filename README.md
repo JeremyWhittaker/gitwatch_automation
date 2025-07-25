@@ -6,8 +6,8 @@ Automated setup and management tools for gitwatch - continuous version control f
 
 ```bash
 # Clone this repository
-git clone https://github.com/YOUR_USERNAME/gitwatch-automation.git
-cd gitwatch-automation
+git clone git@github.com:JeremyWhittaker/gitwatch_automation.git
+cd gitwatch_automation
 
 # Run the installer
 ./install.sh
